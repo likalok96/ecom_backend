@@ -11,7 +11,10 @@ const jwt = require("jsonwebtoken")
 
 const port = process.env.PORT || 3001;
 
-const stripe = require("stripe")('sk_test_51NTkxfC7JN2n5ATo8tyT4WFDqmlOpOWx9L73DNoh2sr7JGybnuvWTNB9szzkurxZqwq4XzHUf1Lf9r6WOdQEWMz700MiZ2s1sc');
+//const stripe = require("stripe")('sk_test_51NTkxfC7JN2n5ATo8tyT4WFDqmlOpOWx9L73DNoh2sr7JGybnuvWTNB9szzkurxZqwq4XzHUf1Lf9r6WOdQEWMz700MiZ2s1sc');
+//const stripe = require("stripe")('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');
+const stripe = process.env.NODE_ENV ==='production' ? require("stripe")('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') 
+: require("stripe")('sk_test_51NTkxfC7JN2n5ATo8tyT4WFDqmlOpOWx9L73DNoh2sr7JGybnuvWTNB9szzkurxZqwq4XzHUf1Lf9r6WOdQEWMz700MiZ2s1sc')
 
 app.set('trust_proxy',1)
 
@@ -23,21 +26,35 @@ app.use(cors({ origin: ['https://wnp-ecom.uc.r.appspot.com','https://server-dot-
 app.use(cookirParser());
 app.use(bodyParser.urlencoded({ extended: true}));
 
-//const baseUrl = 'https://wnp-ecom.uc.r.appspot.com'
-const baseUrl = 'http://localhost:3000'
+const baseUrl = 'https://wnp-ecom.uc.r.appspot.com'
+//const baseUrl = 'http://localhost:3000'
 
 
-const conn = mysql.createPool({
+const conn_prd = mysql.createPool({
+    //host: "localhost",
+//    host: '104.197.197.232',
+    //user: "root",
+    //password: "0082468",
+
+    socketPath: process.env.SOCKET_PATH,
+    //socketPath:'/cloudsql/wnp-ecom:us-central1:wnp-mysql',
+    //host: '34.67.184.5',
+    user: "lipper",
+    password: "k0082468",
+    database: "retaildb"
+})
+
+const conn_dev = mysql.createPool({
     host: "localhost",
 //    host: '104.197.197.232',
     user: "root",
     password: "0082468",
 
-//    socketPath: process.env.SOCKET_PATH,
-//    user: "lipper",
-//    password: "k0082468",
-//    database: "retaildb"
+
+    database: "retaildb"
 })
+
+const conn = process.env.NODE_ENV ==='production' ? conn_prd : conn_dev
 
 
 //stripe webhook
@@ -47,7 +64,12 @@ const conn = mysql.createPool({
 //whsec_pqM4DrNSRlfgKt7o9ih3TyWiYRowkARO
 //whsec_vnEOoAaI7mkeHzdORAKWeq1yQ07ycwxP
 // local : whsec_0a68900530084265af66867ecd4d24f9c13c9789b154adf191baa0b22d9fbf71
-const endpointSecret = "whsec_0a68900530084265af66867ecd4d24f9c13c9789b154adf191baa0b22d9fbf71";
+//const endpointSecret = "whsec_0a68900530084265af66867ecd4d24f9c13c9789b154adf191baa0b22d9fbf71";
+
+//const endpointSecret = "whsec_ti1aBw3M7n4KpZQxFoqiQVwMZzxXkzgX";
+
+const endpointSecret = process.env.NODE_ENV ==='production' ? 'whsec_ti1aBw3M7n4KpZQxFoqiQVwMZzxXkzgX' : 'whsec_0a68900530084265af66867ecd4d24f9c13c9789b154adf191baa0b22d9fbf71'
+
 
 app.post('/webhook', express.raw({type: 'application/json'}), (request, response) => {
   const sig = request.headers['stripe-signature'];
@@ -314,24 +336,56 @@ app.use(express.json());
 
 const createTokens = (user) =>{
     const accessToken = jwt.sign({user},
-        "jwtsecret"
+        "jwtsecret",
+        { expiresIn: 10}
     );
     return accessToken;
 }
+
+const createRefreshTokens = (user) =>{
+    const accessToken = jwt.sign({user},
+        "refreshjwtsecret",
+        { expiresIn: 60 * 60}
+    );
+    return accessToken;
+}
+
+app.post("/refresh",(req,res)=>{
+    const refreshToken = req.body.token
+
+    if(!refreshToken||refreshToken==='') {return res.json({Auth: false, Res: req})}
+
+    else{
+        jwt.verify(refreshToken,"refreshjwtsecret",(err,result)=>{
+            if (err) {
+                return res.json({Status: "Auth Expired"})
+            } else {
+                //req.user = result.user;
+
+                const accessToken = createTokens(result.user)
+                return  res.json({Status: 'Success', Token: accessToken})
+                
+            }
+        })
+    }
+
+
+})
 
 const validateToken = (req, res ,next) => {
     const accessToken = req.body.token
     console.log(req.body)
 
     //if(!accessToken) {return res.status(400).json({error: "no user"+ accessToken})}
-    if(!accessToken||accessToken==='') {return res.json({Auth: false, Res: req})}
+    if(!accessToken||accessToken==='') {return res.status(401).json({Auth: false, Res: req})}
 
 
     else{
         //const vaildToken = 
         jwt.verify(accessToken,"jwtsecret",(err,result)=>{
             if (err) {
-                return res.json({Message: "Auth failed"})
+                //res.status(401).send('Auth Failed')
+                return res.status(401).json({Message: "Auth failed"})
             } else {
                 req.user = result.user;
 
@@ -359,8 +413,9 @@ app.post("/create-checkout-session",validateToken , async (req, res) => {
         total += item.quantity*item.price
     });
 
-    let shipping_rate_id = total>=300 ? 'shr_1NiXssC7JN2n5AToqKBMnyCh' : 'shr_1NiXENC7JN2n5ATosjRZyFLU'
-
+    let shipping_rate_id_dev = total>=300 ? 'shr_1NiXssC7JN2n5AToqKBMnyCh' : 'shr_1NiXENC7JN2n5ATosjRZyFLU'
+    let shipping_rate_id_prd = total>=300 ? 'shr_1ObgFQC7JN2n5ATosmsNXy2k' : 'shr_1ObgEtC7JN2n5ATo6eRCdXNy'
+    let shipping_rate_id = process.env.NODE_ENV=='production'? shipping_rate_id_prd :shipping_rate_id_dev
     try{
 
 
@@ -439,7 +494,7 @@ app.post("/account/order", validateToken, (req, res)=>{
     const sql = "SELECT * FROM retaildb.order_table WHERE Unique_id = ?"
     conn.query(sql, [req.user.id],(err,result)=>{
         if (err) return res.json(err);
-        if (result.length > 0){
+        if (result.length >= 0){
             res.send(result);
         }
 
@@ -460,9 +515,9 @@ app.post("/account/order/:order_id", validateToken, (req, res)=>{
 
 
 
-app.put("/account/profile/update", (req, res)=>{
+app.put("/account/profile/update", validateToken, (req, res)=>{
     const sql = "UPDATE retaildb.user SET ? WHERE id = ?;"
-    conn.query(sql, [req.body,req.body.id],(err,result)=>{
+    conn.query(sql, [req.body.profile,req.body.profile.id],(err,result)=>{
         if (err){ return res.json(err)
         }else{
             res.json(result);
@@ -496,14 +551,16 @@ app.post("/account/google", (req, res)=>{
                 } else {
                     console.log(result)
         //            return res.json({Message:'Sign up success'});
+                    const refreshToken = createRefreshTokens({'id':result.insertId,'name':`${req.body.given_name} ' '${req.body.family_name}`})
                     const accessToken = createTokens({'id':result.insertId,'name':`${req.body.given_name} ' '${req.body.family_name}`})
-                    return res.json({Status: 'Success', Token: accessToken})
+                    return res.json({Status: 'Success', Token: refreshToken, accessToken: accessToken})
                 }
         
             })
         } else {
-            const accessToken = createTokens(result[0])
-            return res.json({Status: 'Success', Token: accessToken})
+            const refreshToken = createRefreshTokens(result[0])
+            const accessToken = createTokens(result[0]) 
+            return res.json({Status: 'Success', Token: refreshToken, accessToken: accessToken})
 
         }
 
@@ -561,7 +618,8 @@ app.post("/account/login",(req,res)=>{
         if (err) return res.json(err);
         if (result.length > 0){
 
-            const accessToken = createTokens(result[0])
+            const refreshToken = createRefreshTokens(result[0])
+            const accessToken = createTokens(result[0]) 
             //const accessToken = jwt.sign(result[0].name,"jwtsecret")
             //,"envjwtscrete",{expiresIn: '1d'}
             /*
@@ -574,7 +632,7 @@ app.post("/account/login",(req,res)=>{
                 httpOnly: false
             })
             */
-            return res.json({Status: 'Success', Token: accessToken})
+            return res.json({Status: 'Success', Token: refreshToken, accessToken: accessToken})
         } else {
             return res.json({Message: "No Record"})
         }

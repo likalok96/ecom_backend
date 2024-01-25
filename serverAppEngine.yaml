@@ -1,5 +1,6 @@
-runtime: nodejs16
+runtime: nodejs18
 service: server
 env_variables:
-  DB_HOST: '104.197.197.232'
+  DB_HOST: '34.67.184.5'
   SOCKET_PATH: "/cloudsql/wnp-ecom:us-central1:wnp-mysql"
+  NODE_ENV: 'production'
