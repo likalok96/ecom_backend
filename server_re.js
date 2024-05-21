@@ -42,6 +42,7 @@ app.post("/refresh",(req,res)=>{
 })
 
 
+
 app.get("/api/get", (req,res)=> {
     const sql = "SELECT retaildb.product.product_id as id, product_name as `name`,product_cost as price,brand_name as brand , GROUP_CONCAT(DISTINCT retaildb.category.category_name SEPARATOR ',') as category FROM retaildb.product left join retaildb.belongsto on retaildb.product.product_id = retaildb.belongsto.product_id left join retaildb.category on retaildb.belongsto.category_id = retaildb.category.category_id group by retaildb.product.product_id"
     conn.query(sql,(err,result)=>{
