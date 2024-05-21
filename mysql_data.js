@@ -12,8 +12,6 @@ const jwt = require("jsonwebtoken")
 const port = process.env.PORT || 3001;
 
 
-
-
 app.set('trust_proxy',1)
 
 app.use(cors({ origin: ['https://wnp-ecom.uc.r.appspot.com','https://server-dot-wnp-ecom.uc.r.appspot.com','https://wnp-ecom.com','https://www.wnp-ecom.com','https://stripe.com','http://localhost:3000'], credentials: true
