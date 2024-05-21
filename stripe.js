@@ -1,112 +1,125 @@
+require('dotenv').config()
+var express = require('express');
 
-module.exports = {
-    sql_order: function(session, conn, stripe){
-        let errorList = [];
+var router = express.Router();
 
-        let order_details1 = {   Delivery_Address: Object.values(session.shipping_details.address).join(' '),
-                                Shipper_id: 10,
-                                Date_Time: new Date(session.created*1000).toISOString().slice(0, 19).replace('T', ' '),
-                                Customer_id: session.metadata.customer_id,
-                                totalCost: session.amount_total/100,
-                                
-                            }
+//router.use(cookirParser());
+//router.use(bodyParser.urlencoded({ extended: true}));
+const stripe_sql = require('./stripe_sql')
+const validateToken = require('./middleware')
+
+const stripe = process.env.NODE_ENV ==='production' ? require("stripe")(process.env.STRIPE_KEY_PRD) 
+: require("stripe")(process.env.STRIPE_KEY_DEV)
+
+const baseUrl = process.env.NODE_ENV ==='production' ?'https://wnp-ecom.uc.r.appspot.com':'http://localhost:3000'
+const conn = require('./dbConfig')
+const endpointSecret = process.env.NODE_ENV ==='production' ? 'whsec_ti1aBw3M7n4KpZQxFoqiQVwMZzxXkzgX' : 'whsec_0a68900530084265af66867ecd4d24f9c13c9789b154adf191baa0b22d9fbf71'
+
+router.post("/create-checkout-session",validateToken , async (req, res) => {
+    let total = 0;
+    req.body.items.map(item => {
+        total += item.quantity*item.price
+    });
+
+    let shipping_rate_id_dev = total>=300 ? 'shr_1NiXssC7JN2n5AToqKBMnyCh' : 'shr_1NiXENC7JN2n5ATosjRZyFLU'
+    let shipping_rate_id_prd = total>=300 ? 'shr_1ObgFQC7JN2n5ATosmsNXy2k' : 'shr_1ObgEtC7JN2n5ATo6eRCdXNy'
+    let shipping_rate_id = process.env.NODE_ENV=='production'? shipping_rate_id_prd :shipping_rate_id_dev
+    try{
 
 
-        let billing = { payment_method: session.payment_method_types[0],
-                        billing_address: Object.values(session.customer_details.address).join(' '),
-                        }
-        
 
-        function createDbQueries(order_details, coupon) {
+        const session = await stripe.checkout.sessions.create({
+            
+            mode: 'payment',
+            payment_method_types: ["card"],
+            
+            line_items: req.body.items.map(item => {
+                return{
+                    
+                    price_data: {
 
-            let dbQueries = [
-                [`INSERT IGNORE INTO retaildb.billing_details(payment_mode, billing_address) VALUES ('${billing.payment_method}', '${billing.billing_address}')`,
-                 ''],
-                [`SELECT billing_id FROM retaildb.billing_details WHERE payment_mode = '${billing.payment_method}' AND billing_address = '${billing.billing_address}'`,
-                 'billing_id'],
-//                [`SELECT id FROM retaildb.user WHERE Name = '${session.shipping_details.name}'`,
-//                 'id'] ,
-                 
-                [`INSERT INTO retaildb.coupon_data(Coupon_id, Discount, ExpiryDate, Unique_id, isUsed) values ('${coupon.coupon_id}', ${coupon.percent_off}, '${coupon.expire_date}', ${order_details.id},0)`,
-                 ''],
-                coupon.coupon_id ? [`INSERT INTO retaildb.order_table(Delivery_Address, Shipper_id, Date_Time, Unique_id, billing_id,couponID ) VALUES ('${order_details.Delivery_Address}',
-                  ${order_details.Shipper_id}, '${order_details.Date_Time}', ${order_details.Customer_id}, ${order_details.billing_id},'${coupon.coupon_id}' )`,
-                  'insertId'
-                ] : [`INSERT INTO retaildb.order_table(Delivery_Address, Shipper_id, Date_Time, Unique_id, billing_id ) VALUES ('${order_details.Delivery_Address}',
-                ${order_details.Shipper_id}, '${order_details.Date_Time}', ${order_details.Customer_id}, ${order_details.billing_id} )`,
-                'insertId'
-              ]
-                
-
-            ];
-
-            return dbQueries
-        }
-
-        let i = 0;
-
-        function runQueries(order_details,coupon) {
-
-            let dbQueriesArr = createDbQueries(order_details,coupon).slice(i,createDbQueries(order_details,coupon).length)
-
-            if(dbQueriesArr.length === 0){
-                
-                const lineItems =  stripe.checkout.sessions.listLineItems(session.id,{expand: ['data.price.product']},(err, lineItems)=>{
-    
-                    let item_data = lineItems.data;
-                    item_data.map((item)=>{
-                        product_id = item.price.product.metadata.prd_id;
-                        quantity = item.quantity
-                        cost = quantity * item.price.unit_amount
+                        product_data:{
+                            metadata: {prd_id: item.id},
+                            name: item.name,
+                            images: [item.image]
+                        },
+                        unit_amount: Number(item.price.replace('.','')),
+                        currency: "hkd",
                         
-                        item_sql = `INSERT INTO retaildb.items_purchased(Order_id, Product_ID, Quantity, Cost) values (${order_details.insertId}, ${product_id}, ${quantity}, ${cost})`
-                        conn.query(item_sql,(err,result)=>{
-                            if (err){ console.log(err)
-                            }else{
-                                console.log(result)
-                            }
-                        })
-                    })
-                });
-
-                return 
-            }
-
-            var dbQuery = dbQueriesArr[0][0];
-            var field = dbQueriesArr[0][1];
-            conn.query(dbQuery, function(err, results, fields) {
-                if (err) {
-                    errorList.push({ err, results, fields, dbQuery });
+                    },
+                     
+                    quantity: item.quantity
                 }
-                if(field.length > 0){
-                var field_table = field==='insertId' ? results[field] : results[0][field]
-                order_details1 = {...order_details,[field]:field_table}
-                }
-                i++
-                console.log(order_details1)
-                runQueries(order_details1,coupon);
-                
-            });
-        }
+            }),
 
-        const checkout_session = stripe.checkout.sessions.retrieve(session.id,{expand:['total_details.breakdown']})
-        .then((result)=>{
-            console.log('checkout_result: ' +result?.total_details?.breakdown?.discounts[0]?.discount?.coupon?.id)
-            let coupon = {
-                            coupon_id : result?.total_details?.breakdown?.discounts[0]?.discount?.coupon?.id ?? null,
-                            percent_off : result?.total_details?.breakdown?.discounts[0]?.discount?.coupon?.percent_off ?? 0,
-                            expire_date : new Date(session.created*1000).toISOString().slice(0, 10)
-                         }
-
-            runQueries(order_details1,coupon);
+              mode: 'payment',
+           
+            success_url: `${baseUrl}/success/{CHECKOUT_SESSION_ID}`,
+            billing_address_collection: 'required',
+            shipping_address_collection: {allowed_countries:['HK']},
+            shipping_options: [{shipping_rate: shipping_rate_id}],
+            allow_promotion_codes: true,
+            metadata:{customer_id: req.user.id}
 
         })
-        
+      
+        res.json({url: session.url})
+
+        } catch (e) {
+            res.status(400).json({error: e.massage})
         }
+ 
+    });
 
+router.post('/webhook', express.raw({type: 'application/json'}), (request, response) => {
+    const sig = request.headers['stripe-signature'];
+  
+    let event;
+  
+    try {
+      event = stripe.webhooks.constructEvent(request.body, sig, endpointSecret);
+      console.log('verifty')
+    } catch (err) {
+      console.log(err.message)
+      response.status(400).send(`Webhook Error: ${err.message}`);
+      return;
     }
+    let session;
+  
+  
+    // Handle the event
+    switch (event.type) {
+      case 'payment_intent.succeeded':
+        const paymentIntentSucceeded = event.data.object;
+        // Then define and call a function to handle the event payment_intent.succeeded
+        break;
+      // ... handle other event types
+      case 'checkout.session.completed':
+          session = event.data.object;
+          stripe_sql.sql_order(session, conn, stripe)
+  
+      default:
+        console.log(`Unhandled event type ${event.type}`);
+    }
+  
+    // Return a 200 response to acknowledge receipt of the event
+    response.send();
+  });
+  
+router.get("/checkout/session/:session_id",async (req,res)=>{
+    const {session_id} = req.params;
+    const session = await stripe.checkout.sessions.retrieve(session_id,{expand:['total_details.breakdown']});
 
+    res.send(session);
+})
 
-        
-        
+router.get("/checkout/item/:session_id",async (req,res)=>{
+    const {session_id} = req.params;
+    const lineItems =  await stripe.checkout.sessions.listLineItems(session_id,{expand: ['data.price.product']},(err, lineItems)=>{
+        res.send(lineItems);
+    });
 
+    
+})
+
+module.exports = router;
