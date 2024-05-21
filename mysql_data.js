@@ -12,8 +12,7 @@ const jwt = require("jsonwebtoken")
 const port = process.env.PORT || 3001;
 
 
-const stripe = process.env.NODE_ENV ==='production' ? require("stripe")('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') 
-: require("stripe")('sk_test_51NTkxfC7JN2n5ATo8tyT4WFDqmlOpOWx9L73DNoh2sr7JGybnuvWTNB9szzkurxZqwq4XzHUf1Lf9r6WOdQEWMz700MiZ2s1sc')
+
 
 app.set('trust_proxy',1)
 
